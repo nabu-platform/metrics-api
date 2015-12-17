@@ -17,8 +17,4 @@ public interface MetricInstance {
 	 * Set a certain value that is not part of a series, it is simply a single state
 	 */
 	public void set(String id, long value);
-	/**
-	 * The id of this instance
-	 */
-	public String getId();
 }

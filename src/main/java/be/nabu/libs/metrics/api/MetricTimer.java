@@ -1,5 +1,6 @@
 package be.nabu.libs.metrics.api;
 
 public interface MetricTimer {
-	public void stop();
+	public long stop();
+	public MetricInstance getMetrics();
 }
