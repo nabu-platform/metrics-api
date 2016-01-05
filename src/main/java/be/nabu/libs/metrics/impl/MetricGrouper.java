@@ -1,11 +1,10 @@
 package be.nabu.libs.metrics.impl;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import be.nabu.libs.metrics.api.GroupLevelProvider;
 import be.nabu.libs.metrics.api.MetricGauge;
 import be.nabu.libs.metrics.api.MetricInstance;
 import be.nabu.libs.metrics.api.MetricTimer;
@@ -18,11 +17,12 @@ import be.nabu.libs.metrics.api.MetricTimer;
  */
 public class MetricGrouper implements MetricInstance {
 
-	private Map<String, Integer> depths = new HashMap<String, Integer>();
 	private MetricInstance parent;
+	private GroupLevelProvider provider;
 	
-	public MetricGrouper(MetricInstance parent) {
+	public MetricGrouper(MetricInstance parent, GroupLevelProvider provider) {
 		this.parent = parent;
+		this.provider = provider;
 	}
 
 	public List<String> split(String id) {
@@ -34,12 +34,10 @@ public class MetricGrouper implements MetricInstance {
 			int newIndex = id.indexOf(':', index + 1);
 			String part = newIndex < 0 ? id : id.substring(0, newIndex);
 			if (currentDepth == 0) {
-				if (depths.containsKey(part)) {
-					maxDepth = depths.get(part);
-					// we ignore the id alltogether
-					if (maxDepth <= 0) {
-						break;
-					}
+				Integer level = provider.getLevel(part);
+				// we ignore the id alltogether
+				if (level != null && level == 0) {
+					break;
 				}
 			}
 			list.add(part);
@@ -89,14 +87,6 @@ public class MetricGrouper implements MetricInstance {
 		parent.set(id, gauge);
 	}
 	
-	public void setDepth(String id, int depth) {
-		depths.put(id, depth);
-	}
-	
-	public int getDepth(String id) {
-		return depths.containsKey(id) ? depths.get(id) : 1;
-	}
-	
 	public class CombinedTimer implements MetricTimer {
 		private List<MetricTimer> timers;
 		public CombinedTimer(List<MetricTimer> timers) {
@@ -118,5 +108,9 @@ public class MetricGrouper implements MetricInstance {
 		public TimeUnit getTimeUnit() {
 			return timers.isEmpty() ? TimeUnit.MILLISECONDS : timers.get(0).getTimeUnit();
 		}
+	}
+
+	public MetricInstance getParent() {
+		return parent;
 	}
 }
