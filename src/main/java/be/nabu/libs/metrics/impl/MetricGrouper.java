@@ -113,4 +113,8 @@ public class MetricGrouper implements MetricInstance {
 	public MetricInstance getParent() {
 		return parent;
 	}
+
+	public GroupLevelProvider getGroupLevelProvider() {
+		return provider;
+	}
 }
