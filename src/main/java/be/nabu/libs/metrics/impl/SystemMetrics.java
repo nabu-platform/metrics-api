@@ -7,6 +7,7 @@ import java.lang.management.MemoryUsage;
 import java.lang.management.OperatingSystemMXBean;
 import java.lang.management.RuntimeMXBean;
 import java.lang.management.ThreadMXBean;
+import java.lang.reflect.Method;
 import java.nio.file.FileStore;
 import java.nio.file.FileSystems;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import java.util.Map;
 
 import be.nabu.libs.metrics.api.MetricGauge;
 import be.nabu.libs.metrics.api.MetricInstance;
+import be.nabu.libs.metrics.api.MetricProvider;
 
 public class SystemMetrics {
 	
@@ -41,6 +43,8 @@ public class SystemMetrics {
 	public static final String METRICS_LOAD = "load";
 	
 	public static final String METRICS_SPACE_USED = "spaceUsed";
+	
+	public static final String FILE_DESCRIPTOR_USED = "fileDescriptorUsed";
 	
 	private static List<String> fileNamesToIgnore = Arrays.asList("udev", "tmpfs");
 	
@@ -69,6 +73,12 @@ public class SystemMetrics {
 		recordFileMetrics(instance);
 	}
 	
+	public static void record(MetricProvider provider) {
+		recordFileMetrics(provider.getMetricInstance("file"));
+		recordMemoryMetrics(provider.getMetricInstance("memory"));
+		recordRuntimeMetrics(provider.getMetricInstance("runtime"));
+	}
+	
 	public static Map<String, FileStore> filestoreUsageMetrics() {
 		Map<String, FileStore> filestores = new HashMap<String, FileStore>();
 		for (FileStore store : filestores()) {
@@ -94,14 +104,49 @@ public class SystemMetrics {
 		}
 	}
 	
+	// https://docs.oracle.com/javase/8/docs/jre/api/management/extension/com/sun/management/UnixOperatingSystemMXBean.html has calls for file descriptors
+	// because it is in the com.sun namespace, i don't want to include a reference directly
+	private static void attemptRegisterFileDescriptorGauge(MetricInstance instance, final OperatingSystemMXBean operatingSystemMXBean) {
+		try {
+			final Method maxCount = operatingSystemMXBean.getClass().getMethod("getMaxFileDescriptorCount");
+			final Method openCount = operatingSystemMXBean.getClass().getMethod("getOpenFileDescriptorCount");
+			if (maxCount != null && openCount != null) {
+				// not accessible by default?
+				maxCount.setAccessible(true);
+				openCount.setAccessible(true);
+				// call at least once to make sure we can call it before we register a gauge
+				long open = (Long) openCount.invoke(operatingSystemMXBean);
+				long max = (Long) maxCount.invoke(operatingSystemMXBean);
+				instance.set(FILE_DESCRIPTOR_USED, new MetricGauge() {
+					@Override
+					public long getValue() {
+						try {
+							long open = (Long) openCount.invoke(operatingSystemMXBean);
+							long max = (Long) maxCount.invoke(operatingSystemMXBean);
+							// an approximation in percentage of the load on the system
+							return (long) (((1.0 * open) / max) * 100);
+						}
+						catch (Exception e) {
+							// ignore, nothing we can do now...
+							return 0;
+						}
+					}
+				});
+			}
+		}
+		catch (Exception e) {
+			System.err.println("Can not register file descriptor gauge: " + e.getMessage());
+		}
+	}
+	
 	public static void recordRuntimeMetrics(MetricInstance instance) {
 		final RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMXBean();
-		instance.set(METRICS_UPTIME, new MetricGauge() {
-			@Override
-			public long getValue() {
-				return runtimeMXBean.getUptime();
-			}
-		});
+//		instance.set(METRICS_UPTIME, new MetricGauge() {
+//			@Override
+//			public long getValue() {
+//				return runtimeMXBean.getUptime();
+//			}
+//		});
 		final OperatingSystemMXBean operatingSystemMXBean = ManagementFactory.getOperatingSystemMXBean();
 		instance.set(METRICS_LOAD, new MetricGauge() {
 			@Override
@@ -123,6 +168,7 @@ public class SystemMetrics {
 				return threadMXBean.getPeakThreadCount();
 			}
 		});
+		attemptRegisterFileDescriptorGauge(instance, operatingSystemMXBean);
 	}
 
 	public static void recordMemoryMetrics(MetricInstance instance) {
@@ -133,42 +179,44 @@ public class SystemMetrics {
 				return memoryMXBean.getObjectPendingFinalizationCount();
 			}
 		});
-		final MemoryUsage heapMemoryUsage = memoryMXBean.getHeapMemoryUsage();
-		instance.set(METRICS_HEAP_MAX, new MetricGauge() {
-			@Override
-			public long getValue() {
-				return heapMemoryUsage.getMax();
-			}
-		});
-		instance.set(METRICS_HEAP_INIT, new MetricGauge() {
-			@Override
-			public long getValue() {
-				return heapMemoryUsage.getInit();
-			}
-		});
+//		final MemoryUsage heapMemoryUsage = memoryMXBean.getHeapMemoryUsage();
+//		instance.set(METRICS_HEAP_MAX, new MetricGauge() {
+//			@Override
+//			public long getValue() {
+//				return heapMemoryUsage.getMax();
+//			}
+//		});
+//		instance.set(METRICS_HEAP_INIT, new MetricGauge() {
+//			@Override
+//			public long getValue() {
+//				return heapMemoryUsage.getInit();
+//			}
+//		});
 		instance.set(METRICS_HEAP_USED, new MetricGauge() {
 			@Override
 			public long getValue() {
+				MemoryUsage heapMemoryUsage = memoryMXBean.getHeapMemoryUsage();
 				return heapMemoryUsage.getUsed();
 			}
 		});
 		
-		final MemoryUsage nonHeapMemoryUsage = memoryMXBean.getNonHeapMemoryUsage();
-		instance.set(METRICS_NON_HEAP_MAX, new MetricGauge() {
-			@Override
-			public long getValue() {
-				return nonHeapMemoryUsage.getMax();
-			}
-		});
-		instance.set(METRICS_NON_HEAP_INIT, new MetricGauge() {
-			@Override
-			public long getValue() {
-				return nonHeapMemoryUsage.getInit();
-			}
-		});
+//		final MemoryUsage nonHeapMemoryUsage = memoryMXBean.getNonHeapMemoryUsage();
+//		instance.set(METRICS_NON_HEAP_MAX, new MetricGauge() {
+//			@Override
+//			public long getValue() {
+//				return nonHeapMemoryUsage.getMax();
+//			}
+//		});
+//		instance.set(METRICS_NON_HEAP_INIT, new MetricGauge() {
+//			@Override
+//			public long getValue() {
+//				return nonHeapMemoryUsage.getInit();
+//			}
+//		});
 		instance.set(METRICS_NON_HEAP_USED, new MetricGauge() {
 			@Override
 			public long getValue() {
+				MemoryUsage nonHeapMemoryUsage = memoryMXBean.getNonHeapMemoryUsage();
 				return nonHeapMemoryUsage.getUsed();
 			}
 		});
@@ -176,19 +224,23 @@ public class SystemMetrics {
 		instance.set(METRICS_HEAP, new MetricGauge() {
 			@Override
 			public long getValue() {
-				return (long) ((1.0 * heapMemoryUsage.getUsed()) / heapMemoryUsage.getMax());
+				MemoryUsage heapMemoryUsage = memoryMXBean.getHeapMemoryUsage();
+				return (long) ((100.0 * heapMemoryUsage.getUsed()) / heapMemoryUsage.getMax());
 			}
 		});
 		instance.set(METRICS_NON_HEAP, new MetricGauge() {
 			@Override
 			public long getValue() {
-				return (long) ((1.0 * nonHeapMemoryUsage.getUsed()) / nonHeapMemoryUsage.getMax());
+				MemoryUsage nonHeapMemoryUsage = memoryMXBean.getNonHeapMemoryUsage();
+				return (long) ((100.0 * nonHeapMemoryUsage.getUsed()) / nonHeapMemoryUsage.getMax());
 			}
 		});
 		instance.set(METRICS_MEMORY, new MetricGauge() {
 			@Override
 			public long getValue() {
-				return (long) ((1.0 * (nonHeapMemoryUsage.getUsed() + heapMemoryUsage.getUsed())) / (nonHeapMemoryUsage.getMax() + heapMemoryUsage.getMax()));
+				MemoryUsage nonHeapMemoryUsage = memoryMXBean.getNonHeapMemoryUsage();
+				MemoryUsage heapMemoryUsage = memoryMXBean.getHeapMemoryUsage();
+				return (long) ((100.0 * (nonHeapMemoryUsage.getUsed() + heapMemoryUsage.getUsed())) / (nonHeapMemoryUsage.getMax() + heapMemoryUsage.getMax()));
 			}
 		});
 	}
