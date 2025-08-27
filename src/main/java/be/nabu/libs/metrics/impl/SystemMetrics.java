@@ -67,6 +67,11 @@ public class SystemMetrics {
 	
 	public static List<FileStore> filestores() {
 		List<FileStore> stores = new ArrayList<FileStore>();
+		// @2025-08-04: it has happened multiple times that due to downtime of file storage, the NFS mounts were no longer responding
+		// when looping over the filestores, these corrupted mounts seem to hang indefinitely.
+		// adding a log (and immediatly flusing for good measure) to warn the user.
+		System.out.println("Loading filestores, note that corrupt file mounts have been known to create indefinite hangs at startup time");
+		System.out.flush();
 		for (FileStore store : FileSystems.getDefault().getFileStores()) {
 			try {
 				// if, when asked, the usable space is already 0, we will not be watching it
